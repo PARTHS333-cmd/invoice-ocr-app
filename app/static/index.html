@@ -1,0 +1,767 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Invoice OCR Processor</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+    <style>
+        [x-cloak] { display: none !important; }
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+        }
+        .gradient-bg {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+        .drop-zone {
+            transition: all 0.3s ease;
+            border: 2px dashed #cbd5e1;
+        }
+        .drop-zone.dragover {
+            border-color: #667eea;
+            background: rgba(102, 126, 234, 0.05);
+            transform: scale(1.02);
+        }
+        .progress-bar {
+            transition: width 0.5s ease;
+        }
+        .slide-in {
+            animation: slideIn 0.3s ease;
+        }
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .json-editor {
+            font-family: 'Fira Code', 'Consolas', monospace;
+            font-size: 13px;
+            line-height: 1.6;
+        }
+        .split-pane {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+            height: calc(100vh - 200px);
+        }
+        @media (max-width: 1024px) {
+            .split-pane {
+                grid-template-columns: 1fr;
+                height: auto;
+            }
+        }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen" x-data="invoiceApp()" x-init="init()">
+
+    <!-- Navigation -->
+    <nav class="gradient-bg text-white shadow-lg">
+        <div class="max-w-7xl mx-auto px-4 py-4 flex justify-between items-center">
+            <div class="flex items-center gap-3">
+                <i class="fas fa-file-invoice text-2xl"></i>
+                <div>
+                    <h1 class="text-xl font-bold">Invoice OCR Processor</h1>
+                    <p class="text-xs opacity-80">Local &bull; Private &bull; Secure</p>
+                </div>
+            </div>
+            <div class="flex items-center gap-4">
+                <template x-if="isAuthenticated">
+                    <div class="flex items-center gap-3">
+                        <span class="text-sm" x-text="user?.username"></span>
+                        <button @click="logout()" class="bg-white/20 hover:bg-white/30 px-4 py-2 rounded-lg text-sm transition">
+                            <i class="fas fa-sign-out-alt mr-2"></i>Logout
+                        </button>
+                    </div>
+                </template>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Auth Screen -->
+    <div x-show="!isAuthenticated" x-cloak class="min-h-screen flex items-center justify-center p-4">
+        <div class="glass-panel rounded-2xl shadow-2xl p-8 w-full max-w-md slide-in">
+            <div class="text-center mb-8">
+                <div class="w-16 h-16 gradient-bg rounded-2xl flex items-center justify-center mx-auto mb-4">
+                    <i class="fas fa-file-invoice text-white text-2xl"></i>
+                </div>
+                <h2 class="text-2xl font-bold text-gray-800" x-text="authMode === 'login' ? 'Welcome Back' : 'Create Account'"></h2>
+                <p class="text-gray-500 mt-2" x-text="authMode === 'login' ? 'Sign in to process invoices' : 'Start processing invoices locally'"></p>
+            </div>
+
+            <!-- Login Form -->
+            <form x-show="authMode === 'login'" @submit.prevent="login()" class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Username</label>
+                    <input x-model="loginForm.username" type="text" required
+                        class="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition"
+                        placeholder="Enter username">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Password</label>
+                    <input x-model="loginForm.password" type="password" required
+                        class="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition"
+                        placeholder="Enter password">
+                </div>
+                <button type="submit" :disabled="authLoading"
+                    class="w-full gradient-bg text-white py-3 rounded-lg font-medium hover:opacity-90 transition disabled:opacity-50">
+                    <i class="fas fa-spinner fa-spin mr-2" x-show="authLoading"></i>
+                    <span x-text="authLoading ? 'Signing in...' : 'Sign In'"></span>
+                </button>
+                <p class="text-center text-sm text-gray-500">
+                    Don't have an account? 
+                    <button type="button" @click="authMode = 'register'" class="text-indigo-600 font-medium hover:underline">Sign up</button>
+                </p>
+                <!-- Login Error Display -->
+                <div x-show="authError && authMode === 'login'" x-transition class="p-3 bg-red-50 border border-red-200 text-red-700 rounded-lg text-sm flex items-start gap-2">
+                    <i class="fas fa-exclamation-circle mt-0.5"></i>
+                    <span x-text="authError"></span>
+                </div>
+            </form>
+
+            <!-- Register Form -->
+            <form x-show="authMode === 'register'" @submit.prevent="register()" class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Username</label>
+                    <input x-model="registerForm.username" type="text" required
+                        class="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition"
+                        placeholder="Choose a username">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                    <input x-model="registerForm.email" type="email" required
+                        class="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition"
+                        placeholder="your@email.com">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Password</label>
+                    <input x-model="registerForm.password" type="password" required minlength="8"
+                        class="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition"
+                        placeholder="Min 8 characters, max 72">
+                    <p class="text-xs text-gray-400 mt-1" x-text="registerForm.password ? registerForm.password.length + '/72 characters' : ''"></p>
+                </div>
+                <button type="submit" :disabled="authLoading"
+                    class="w-full gradient-bg text-white py-3 rounded-lg font-medium hover:opacity-90 transition disabled:opacity-50">
+                    <i class="fas fa-spinner fa-spin mr-2" x-show="authLoading"></i>
+                    <span x-text="authLoading ? 'Creating Account...' : 'Create Account'"></span>
+                </button>
+                <p class="text-center text-sm text-gray-500">
+                    Already have an account? 
+                    <button type="button" @click="authMode = 'login'" class="text-indigo-600 font-medium hover:underline">Sign in</button>
+                </p>
+                <!-- Register Error Display -->
+                <div x-show="authError && authMode === 'register'" x-transition class="p-3 bg-red-50 border border-red-200 text-red-700 rounded-lg text-sm flex items-start gap-2">
+                    <i class="fas fa-exclamation-circle mt-0.5"></i>
+                    <span x-text="authError"></span>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Main Dashboard -->
+    <div x-show="isAuthenticated" x-cloak class="max-w-7xl mx-auto px-4 py-6">
+        
+        <!-- Upload Section -->
+        <div class="glass-panel rounded-2xl shadow-lg p-6 mb-6">
+            <h2 class="text-lg font-semibold text-gray-800 mb-4">
+                <i class="fas fa-cloud-upload-alt mr-2 text-indigo-600"></i>Upload Invoice
+            </h2>
+            
+            <!-- Drop Zone -->
+            <div class="drop-zone rounded-xl p-8 text-center cursor-pointer"
+                @dragover.prevent="dragOver = true"
+                @dragleave.prevent="dragOver = false"
+                @drop.prevent="handleDrop($event)"
+                @click="$refs.fileInput.click()"
+                :class="{ 'dragover': dragOver }">
+                
+                <input type="file" x-ref="fileInput" @change="handleFileSelect($event)" 
+                    accept=".pdf,.png,.jpg,.jpeg,.tiff,.bmp,.webp" class="hidden" multiple>
+                
+                <div x-show="!uploading">
+                    <i class="fas fa-cloud-upload-alt text-4xl text-gray-400 mb-3"></i>
+                    <p class="text-gray-600 font-medium">Drag & drop files here or click to browse</p>
+                    <p class="text-sm text-gray-400 mt-2">Supports PDF, PNG, JPG, TIFF (Max 10MB)</p>
+                </div>
+                
+                <!-- Upload Progress -->
+                <div x-show="uploading" class="w-full max-w-md mx-auto">
+                    <div class="flex justify-between text-sm mb-2">
+                        <span class="text-gray-600" x-text="uploadStage"></span>
+                        <span class="text-indigo-600 font-medium" x-text="uploadProgress + '%'"></span>
+                    </div>
+                    <div class="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
+                        <div class="gradient-bg h-full rounded-full progress-bar" :style="'width: ' + uploadProgress + '%'"></div>
+                    </div>
+                    <p x-show="taskId" class="text-xs text-gray-400 mt-2">
+                        Task ID: <span x-text="taskId"></span>
+                    </p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Processing Result (Split Screen) -->
+        <div x-show="currentResult" x-transition class="glass-panel rounded-2xl shadow-lg p-6 mb-6 slide-in">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-lg font-semibold text-gray-800">
+                    <i class="fas fa-check-circle mr-2 text-green-500"></i>Processing Complete
+                </h2>
+                <div class="flex gap-2">
+                    <button @click="viewMode = viewMode === 'json' ? 'form' : 'json'"
+                        class="px-4 py-2 bg-gray-100 rounded-lg text-sm hover:bg-gray-200 transition">
+                        <i class="fas" :class="viewMode === 'json' ? 'fa-list' : 'fa-code'"></i>
+                        <span x-text="viewMode === 'json' ? 'Form View' : 'JSON View'"></span>
+                    </button>
+                    <button @click="copyToClipboard()"
+                        class="px-4 py-2 bg-indigo-100 text-indigo-700 rounded-lg text-sm hover:bg-indigo-200 transition">
+                        <i class="fas fa-copy mr-2"></i>Copy JSON
+                    </button>
+                    <button @click="currentResult = null; currentFile = null"
+                        class="px-4 py-2 bg-gray-100 text-gray-600 rounded-lg text-sm hover:bg-gray-200 transition">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+            </div>
+
+            <div class="split-pane">
+                <!-- Document Preview -->
+                <div class="bg-gray-100 rounded-xl overflow-hidden flex flex-col">
+                    <div class="p-3 bg-gray-200 text-sm font-medium text-gray-700 flex items-center gap-2">
+                        <i class="fas fa-eye"></i> Document Preview
+                    </div>
+                    <div class="flex-1 overflow-auto p-4 flex items-center justify-center">
+                        <img x-show="currentFile?.preview" :src="currentFile?.preview" 
+                            class="max-w-full max-h-full object-contain rounded-lg shadow" alt="Document preview">
+                        <div x-show="!currentFile?.preview" class="text-gray-400 text-center">
+                            <i class="fas fa-file-pdf text-4xl mb-2"></i>
+                            <p>PDF preview not available</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Extracted Data -->
+                <div class="bg-gray-900 rounded-xl overflow-hidden flex flex-col">
+                    <div class="p-3 bg-gray-800 text-sm font-medium text-gray-300 flex items-center gap-2">
+                        <i class="fas" :class="viewMode === 'json' ? 'fa-code' : 'fa-table'"></i>
+                        <span x-text="viewMode === 'json' ? 'JSON Output' : 'Structured Data'"></span>
+                    </div>
+                    
+                    <!-- JSON View -->
+                    <div x-show="viewMode === 'json'" class="flex-1 overflow-auto p-4">
+                        <pre class="json-editor text-green-400" x-text="JSON.stringify(currentResult?.structured_data, null, 2)"></pre>
+                    </div>
+                    
+                    <!-- Form View -->
+                    <div x-show="viewMode === 'form'" class="flex-1 overflow-auto p-4 space-y-3">
+                        <div class="grid grid-cols-2 gap-3">
+                            <div class="bg-gray-800 p-3 rounded-lg">
+                                <label class="text-xs text-gray-500">Invoice ID</label>
+                                <p class="text-white font-mono" x-text="currentResult?.structured_data?.invoice_id || '—'"></p>
+                            </div>
+                            <div class="bg-gray-800 p-3 rounded-lg">
+                                <label class="text-xs text-gray-500">Date</label>
+                                <p class="text-white" x-text="currentResult?.structured_data?.date || '—'"></p>
+                            </div>
+                            <div class="bg-gray-800 p-3 rounded-lg">
+                                <label class="text-xs text-gray-500">Vendor</label>
+                                <p class="text-white" x-text="currentResult?.structured_data?.vendor_name || '—'"></p>
+                            </div>
+                            <div class="bg-gray-800 p-3 rounded-lg">
+                                <label class="text-xs text-gray-500">Customer</label>
+                                <p class="text-white" x-text="currentResult?.structured_data?.customer_name || '—'"></p>
+                            </div>
+                            <div class="bg-gray-800 p-3 rounded-lg">
+                                <label class="text-xs text-gray-500">Subtotal</label>
+                                <p class="text-white font-mono" x-text="formatCurrency(currentResult?.structured_data?.subtotal, currentResult?.structured_data?.currency)"></p>
+                            </div>
+                            <div class="bg-gray-800 p-3 rounded-lg">
+                                <label class="text-xs text-gray-500">Tax</label>
+                                <p class="text-white font-mono" x-text="formatCurrency(currentResult?.structured_data?.tax, currentResult?.structured_data?.currency)"></p>
+                            </div>
+                            <div class="bg-gray-800 p-3 rounded-lg col-span-2">
+                                <label class="text-xs text-gray-500">Total Amount</label>
+                                <p class="text-2xl text-green-400 font-mono" x-text="formatCurrency(currentResult?.structured_data?.total_amount, currentResult?.structured_data?.currency)"></p>
+                            </div>
+                        </div>
+                        
+                        <!-- Line Items -->
+                        <div x-show="currentResult?.structured_data?.line_items?.length" class="mt-4">
+                            <h4 class="text-sm font-medium text-gray-300 mb-2">Line Items</h4>
+                            <table class="w-full text-sm">
+                                <thead class="text-gray-500">
+                                    <tr>
+                                        <th class="text-left py-2">Description</th>
+                                        <th class="text-right py-2">Qty</th>
+                                        <th class="text-right py-2">Price</th>
+                                        <th class="text-right py-2">Total</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="text-gray-300">
+                                    <template x-for="item in currentResult?.structured_data?.line_items" :key="item.description">
+                                        <tr class="border-t border-gray-700">
+                                            <td class="py-2" x-text="item.description"></td>
+                                            <td class="text-right py-2" x-text="item.quantity"></td>
+                                            <td class="text-right py-2 font-mono" x-text="formatCurrency(item.unit_price, currentResult?.structured_data?.currency)"></td>
+                                            <td class="text-right py-2 font-mono" x-text="formatCurrency(item.total, currentResult?.structured_data?.currency)"></td>
+                                        </tr>
+                                    </template>
+                                </tbody>
+                            </table>
+                        </div>
+                        
+                        <!-- Raw Text Toggle -->
+                        <div class="mt-4">
+                            <button @click="showRawText = !showRawText" 
+                                class="text-sm text-indigo-400 hover:text-indigo-300 transition">
+                                <i class="fas" :class="showRawText ? 'fa-chevron-up' : 'fa-chevron-down'"></i>
+                                <span x-text="showRawText ? 'Hide Raw Text' : 'Show Raw Text'"></span>
+                            </button>
+                            <div x-show="showRawText" x-transition class="mt-2 p-3 bg-gray-800 rounded-lg">
+                                <pre class="text-xs text-gray-400 whitespace-pre-wrap" x-text="currentResult?.raw_text"></pre>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Document History -->
+        <div class="glass-panel rounded-2xl shadow-lg p-6">
+            <h2 class="text-lg font-semibold text-gray-800 mb-4">
+                <i class="fas fa-history mr-2 text-indigo-600"></i>Recent Documents
+            </h2>
+            
+            <div x-show="documents.length === 0" class="text-center py-12 text-gray-400">
+                <i class="fas fa-inbox text-4xl mb-3"></i>
+                <p>No documents processed yet</p>
+            </div>
+            
+            <div x-show="documents.length > 0" class="overflow-x-auto">
+                <table class="w-full text-sm">
+                    <thead>
+                        <tr class="text-left text-gray-500 border-b">
+                            <th class="pb-3 font-medium">Filename</th>
+                            <th class="pb-3 font-medium">Status</th>
+                            <th class="pb-3 font-medium">Date</th>
+                            <th class="pb-3 font-medium text-right">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <template x-for="doc in documents" :key="doc.id">
+                            <tr class="border-b border-gray-100 hover:bg-gray-50 transition">
+                                <td class="py-3">
+                                    <div class="flex items-center gap-2">
+                                        <i class="fas" :class="doc.mime_type === 'application/pdf' ? 'fa-file-pdf text-red-500' : 'fa-file-image text-blue-500'"></i>
+                                        <span class="text-gray-700" x-text="doc.original_filename"></span>
+                                    </div>
+                                </td>
+                                <td class="py-3">
+                                    <span class="px-2 py-1 rounded-full text-xs font-medium"
+                                        :class="{
+                                            'bg-yellow-100 text-yellow-700': doc.status === 'pending' || doc.status === 'processing',
+                                            'bg-green-100 text-green-700': doc.status === 'completed',
+                                            'bg-red-100 text-red-700': doc.status === 'failed'
+                                        }"
+                                        x-text="doc.status"></span>
+                                </td>
+                                <td class="py-3 text-gray-500" x-text="formatDate(doc.created_at)"></td>
+                                <td class="py-3 text-right">
+                                    <button x-show="doc.status === 'completed'" @click="loadResult(doc.id)"
+                                        class="text-indigo-600 hover:text-indigo-800 mr-3 transition">
+                                        <i class="fas fa-eye"></i>
+                                    </button>
+                                    <button @click="downloadDocument(doc.id)"
+                                        class="text-gray-400 hover:text-gray-600 mr-3 transition">
+                                        <i class="fas fa-download"></i>
+                                    </button>
+                                    <button @click="deleteDocument(doc.id)"
+                                        class="text-red-400 hover:text-red-600 transition">
+                                        <i class="fas fa-trash"></i>
+                                    </button>
+                                </td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Notifications -->
+    <div class="fixed bottom-4 right-4 space-y-2 z-50">
+        <template x-for="toast in toasts" :key="toast.id">
+            <div x-show="toast.visible" x-transition
+                class="px-4 py-3 rounded-lg shadow-lg text-white flex items-center gap-3"
+                :class="{
+                    'bg-green-500': toast.type === 'success',
+                    'bg-red-500': toast.type === 'error',
+                    'bg-blue-500': toast.type === 'info'
+                }">
+                <i class="fas" :class="{
+                    'fa-check-circle': toast.type === 'success',
+                    'fa-exclamation-circle': toast.type === 'error',
+                    'fa-info-circle': toast.type === 'info'
+                }"></i>
+                <span x-text="toast.message"></span>
+            </div>
+        </template>
+    </div>
+
+    <script>
+        function invoiceApp() {
+            return {
+                // Auth state
+                isAuthenticated: false,
+                authMode: 'login',
+                authLoading: false,
+                authError: '',
+                token: localStorage.getItem('token') || '',
+                user: null,
+                
+                // Forms
+                loginForm: { username: '', password: '' },
+                registerForm: { username: '', email: '', full_name: '', password: '' },
+                
+                // Upload state
+                dragOver: false,
+                uploading: false,
+                uploadProgress: 0,
+                uploadStage: '',
+                taskId: null,
+                
+                // Results
+                currentResult: null,
+                currentFile: null,
+                viewMode: 'form',
+                showRawText: false,
+                
+                // History
+                documents: [],
+                
+                // WebSocket
+                ws: null,
+                
+                // UI
+                toasts: [],
+                toastId: 0,
+                
+                async init() {
+                    if (this.token) {
+                        await this.fetchUser();
+                    }
+                    if (this.isAuthenticated) {
+                        await this.fetchDocuments();
+                    }
+                },
+                
+                async login() {
+                    this.authLoading = true;
+                    this.authError = '';
+                    try {
+                        const formData = new URLSearchParams();
+                        formData.append('username', this.loginForm.username);
+                        formData.append('password', this.loginForm.password);
+                        
+                        const res = await fetch('/api/auth/token', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                            body: formData
+                        });
+                        
+                        if (!res.ok) {
+                            const err = await res.json();
+                            throw new Error(err.detail || 'Invalid credentials');
+                        }
+                        
+                        const data = await res.json();
+                        this.token = data.access_token;
+                        localStorage.setItem('token', this.token);
+                        await this.fetchUser();
+                    } catch (err) {
+                        this.authError = err.message;
+                    } finally {
+                        this.authLoading = false;
+                    }
+                },
+                
+                async register() {
+                    // FRONTEND PRE-VALIDATION
+                    if (this.registerForm.password.length > 72) {
+                        this.authError = "Password is too long. Maximum 72 characters allowed.";
+                        return;
+                    }
+                    if (this.registerForm.password.length < 8) {
+                        this.authError = "Password must be at least 8 characters.";
+                        return;
+                    }
+                    
+                    this.authLoading = true;
+                    this.authError = '';
+                    try {
+                        const res = await fetch('/api/auth/register', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(this.registerForm)
+                        });
+                        
+                        if (!res.ok) {
+                            const err = await res.json();
+                            throw new Error(err.detail || 'Registration failed');
+                        }
+                        
+                        this.showToast('Account created! Please sign in.', 'success');
+                        this.authMode = 'login';
+                        this.loginForm.username = this.registerForm.username;
+                    } catch (err) {
+                        this.authError = err.message;
+                    } finally {
+                        this.authLoading = false;
+                    }
+                },
+                
+                async fetchUser() {
+                    try {
+                        const res = await fetch('/api/auth/me', {
+                            headers: { 'Authorization': `Bearer ${this.token}` }
+                        });
+                        if (res.ok) {
+                            this.user = await res.json();
+                            this.isAuthenticated = true;
+                        } else {
+                            this.logout();
+                        }
+                    } catch {
+                        this.logout();
+                    }
+                },
+                
+                logout() {
+                    this.token = '';
+                    this.user = null;
+                    this.isAuthenticated = false;
+                    localStorage.removeItem('token');
+                    if (this.ws) this.ws.close();
+                },
+                
+                handleDrop(e) {
+                    this.dragOver = false;
+                    const files = Array.from(e.dataTransfer.files);
+                    files.forEach(f => this.uploadFile(f));
+                },
+                
+                handleFileSelect(e) {
+                    const files = Array.from(e.target.files);
+                    files.forEach(f => this.uploadFile(f));
+                },
+                
+                async uploadFile(file) {
+                    if (this.uploading) return;
+                    
+                    const preview = file.type.startsWith('image/') 
+                        ? URL.createObjectURL(file) 
+                        : null;
+                    this.currentFile = { name: file.name, preview, type: file.type };
+                    
+                    this.uploading = true;
+                    this.uploadProgress = 0;
+                    this.uploadStage = 'Uploading...';
+                    
+                    const formData = new FormData();
+                    formData.append('file', file);
+                    
+                    try {
+                        const res = await fetch('/api/documents/upload', {
+                            method: 'POST',
+                            headers: { 'Authorization': `Bearer ${this.token}` },
+                            body: formData
+                        });
+                        
+                        if (!res.ok) throw new Error('Upload failed');
+                        
+                        const data = await res.json();
+                        this.taskId = data.task_id || data.id || data.task; // Fallback to document ID if task_id is not provided
+                        this.uploadStage = 'Processing with OCR...';
+                        
+                        this.connectWebSocket(data.task_id);
+                        this.pollTaskStatus(data.task_id);
+                        
+                        await this.fetchDocuments();
+                    } catch (err) {
+                        this.showToast(err.message, 'error');
+                        this.uploading = false;
+                        this.currentFile = null;
+                        this.uploadStage = '';
+
+                        const fileInput = document.querySelector('input[type="file"]');
+                        if (fileInput) {
+                            fileInput.value = '';
+                        }
+                    }
+                },
+                
+                connectWebSocket(taskId) {
+                    if (!taskId || taskId === 'undefined') {
+                        console.warn('Aborting connectWebSocket: taskId is undefined', taskId);
+                        return;
+                    }  
+                    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                    const wsUrl = `${protocol}//${window.location.host}/api/tasks/ws/${taskId}?token=${this.token}`;
+                    this.ws = new WebSocket(wsUrl);
+                    
+                    this.ws.onmessage = (e) => {
+                        const data = JSON.parse(e.data);
+                        
+                        if (data.type === 'progress') {
+                            this.uploadProgress = data.progress;
+                            this.uploadStage = data.stage;
+                        } else if (data.type === 'complete') {
+                            this.uploadProgress = 100;
+                            this.uploadStage = 'Complete!';
+                            this.currentResult = data.result;
+                            this.uploading = false;
+                            this.showToast('Processing complete!', 'success');
+                            this.ws.close();
+                            this.fetchDocuments();
+                        } else if (data.type === 'error') {
+                            this.uploading = false;
+                            this.showToast(data.error, 'error');
+                            this.ws.close();
+                        }
+                    };
+                    
+                    this.ws.onerror = () => {
+                        console.log('WebSocket error, falling back to polling');
+                    };
+                },
+                
+                async pollTaskStatus(taskId) {
+                    if(!taskId || taskId === 'undefined') {
+                        console.warn('Aborting pollTaskStatus: taskId is undefined', taskId);
+                        return;
+                    }
+                    const poll = async () => {
+                        try {
+                            const res = await fetch(`/api/tasks/${taskId}`, {
+                                headers: { 'Authorization': `Bearer ${this.token}` }
+                            });
+                            
+                            if (!res.ok) return;
+                            
+                            const data = await res.json();
+                            this.uploadProgress = data.progress;
+                            this.uploadStage = data.stage;
+                            
+                            if (data.status === 'completed') {
+                                this.uploadProgress = 100;
+                                this.currentResult = {
+                                    structured_data: data.result,
+                                    raw_text: data.result?.raw_text || '',
+                                    processing_time_ms: data.processing_time_ms
+                                };
+                                this.uploading = false;
+                                this.showToast('Processing complete!', 'success');
+                                this.fetchDocuments();
+                                return;
+                            } else if (data.status === 'failed') {
+                                this.uploading = false;
+                                this.showToast(data.error || 'Processing failed', 'error');
+                                return;
+                            }
+                            
+                            if (this.uploading) {
+                                setTimeout(poll, 1000);
+                            }
+                        } catch (err) {
+                            console.error('Poll error:', err);
+                        }
+                    };
+                    
+                    poll();
+                },
+                
+                async fetchDocuments() {
+                    try {
+                        const res = await fetch('/api/documents/', {
+                            headers: { 'Authorization': `Bearer ${this.token}` }
+                        });
+                        if (res.ok) {
+                            this.documents = await res.json();
+                        }
+                    } catch (err) {
+                        console.error('Failed to fetch documents:', err);
+                    }
+                },
+                
+                async loadResult(docId) {
+                    try {
+                        const res = await fetch(`/api/documents/${docId}/result`, {
+                            headers: { 'Authorization': `Bearer ${this.token}` }
+                        });
+                        if (res.ok) {
+                            this.currentResult = await res.json();
+                            this.viewMode = 'form';
+                        }
+                    } catch (err) {
+                        this.showToast('Failed to load result', 'error');
+                    }
+                },
+                
+                async downloadDocument(docId) {
+                    window.open(`/api/documents/${docId}/download?token=${this.token}`, '_blank');
+                },
+                
+                async deleteDocument(docId) {
+                    if (!confirm('Delete this document?')) return;
+                    
+                    try {
+                        const res = await fetch(`/api/documents/${docId}`, {
+                            method: 'DELETE',
+                            headers: { 'Authorization': `Bearer ${this.token}` }
+                        });
+                        
+                        if (res.ok) {
+                            this.showToast('Document deleted', 'success');
+                            this.fetchDocuments();
+                            if (this.currentResult && this.currentDocumentId === docId) {
+                                this.currentResult = null;
+                            }
+                        }
+                    } catch (err) {
+                        this.showToast('Delete failed', 'error');
+                    }
+                },
+                
+                copyToClipboard() {
+                    const json = JSON.stringify(this.currentResult?.structured_data, null, 2);
+                    navigator.clipboard.writeText(json).then(() => {
+                        this.showToast('Copied to clipboard!', 'success');
+                    });
+                },
+                
+                formatCurrency(amount, currency) {
+                    if (amount === null || amount === undefined) return '—';
+                    const symbol = { USD: '$', EUR: '€', GBP: '£', JPY: '¥' }[currency] || '';
+                    return `${symbol}${parseFloat(amount).toFixed(2)}`;
+                },
+                
+                formatDate(dateStr) {
+                    return new Date(dateStr).toLocaleDateString();
+                },
+                
+                showToast(message, type = 'info') {
+                    const id = ++this.toastId;
+                    this.toasts.push({ id, message, type, visible: true });
+                    setTimeout(() => {
+                        const t = this.toasts.find(t => t.id === id);
+                        if (t) t.visible = false;
+                        setTimeout(() => {
+                            this.toasts = this.toasts.filter(t => t.id !== id);
+                        }, 300);
+                    }, 3000);
+                }
+            }
+        }
+    </script>
+</body>
+</html>
